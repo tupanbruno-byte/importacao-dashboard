@@ -106,11 +106,13 @@ h2{font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mt);
 <section id="concluidos"><h2>Concluídos</h2><div class="kpis" id="cc"></div></section>
 </main>
 <script>
-/* CONFIGURAÇÃO: links CSV publicados do Google Sheets */
+/* CONFIGURAÇÃO: fonte única = guia "ITENS PREVISTOS CHEGADA PORTO" (CSV publicado) */
 const CONFIG={
- ATRACACAO_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vRRcjCz55sl17I4OMcz2AdS0J915NnR44p6A3is7fy-wcYuY9uh1e3tID0Z37qvsA/pub?gid=1115827490&single=true&output=csv",
+ ATRACACAO_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vQpwUyr7FOeVegXFogXIk7PzxUeUbkbja-IRGpdJz9o1kn4T6lV4NqH64XvY2Ywwo27Evzt4fTxoGIT/pub?gid=26038848&single=true&output=csv",
  CONCLUIDOS_URL:"",
- REFRESH_MIN:5
+ REFRESH_MIN:5,
+ CACHE_KEY:"ct_itens_previstos_v2",
+ TIMEOUT_MS:15000
 };
 const ST={NAV:{n:"NAVEGANDO",c:"#30D158"},VER:{n:"CANAL VERMELHO",c:"#FF453F"},DES:{n:"EM PROC. DE DESOVA",c:"#FFD60A"},ATR:{n:"ATRACADO",c:"#0A84FF"}};
 const $=id=>document.getElementById(id);
@@ -118,102 +120,110 @@ const norm=s=>(s||"").toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
 const fmtN=n=>n.toLocaleString("pt-BR");
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const uniq=a=>[...new Set(a.filter(Boolean))];
-let DATA={base:[],done:[]},filter="ALL",limit=24,q="";
+let DATA={base:[],done:[]},filter="ALL",limit=24,q="",loading=false;
 
 function setMsg(t,err){const m=$("msg");m.textContent=t||"";m.className=err?"err":""}
 function lsGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
 function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 
-function parseCSV(t){const r=[];let row=[],c="",q=false;t=t.replace(/^\uFEFF/,"");
+/* CSV simples e robusto: delimitador detectado pela primeira linha (vírgula ou ponto e vírgula) */
+function parseCSV(t){
+ t=(t||"").replace(/^\uFEFF/,"");
+ const first=t.split(/\r?\n/,1)[0]||"";
+ const delim=(first.match(/;/g)||[]).length>(first.match(/,/g)||[]).length?";":",";
+ const r=[];let row=[],c="",inq=false;
  for(let i=0;i<t.length;i++){const ch=t[i];
-  if(q){if(ch=='"'){if(t[i+1]=='"'){c+='"';i++}else q=false}else c+=ch}
-  else if(ch=='"')q=true;
-  else if(ch==","||ch==";"){row.push(c);c=""}
+  if(inq){if(ch=='"'){if(t[i+1]=='"'){c+='"';i++}else inq=false}else c+=ch}
+  else if(ch=='"')inq=true;
+  else if(ch==delim){row.push(c);c=""}
   else if(ch=="\n"||ch=="\r"){if(ch=="\r"&&t[i+1]=="\n")i++;row.push(c);r.push(row);row=[];c=""}
   else c+=ch}
- if(c||row.length){row.push(c);r.push(row)}return r.filter(x=>x.some(v=>v.trim()))}
+ if(c||row.length){row.push(c);r.push(row)}
+ return r.filter(x=>x.some(v=>(v||"").trim()))}
 
-function num(v){v=(v||"").toString().replace(/\./g,"").replace(",",".");const n=parseFloat(v);return isNaN(n)?0:n}
+function num(v){
+ let s=(v==null?"":String(v)).trim().replace(/[^\d.,\-]/g,"");
+ if(!s)return 0;
+ if(s.includes(","))s=s.replace(/\./g,"").replace(",",".");
+ else if(/^-?\d{1,3}(\.\d{3})+$/.test(s))s=s.replace(/\./g,"");
+ const n=parseFloat(s);return isNaN(n)?0:n}
 function pd(s){s=(s||"").toString();let m=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m)return new Date(+m[1],+m[2]-1,+m[3]);
  m=s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);if(m){let y=+m[3];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[1])}
  return null}
 function sk(s){s=norm(s);if(s.includes("VERMELHO"))return"VER";if(s.includes("DESOVA")||s.includes("DESCOVA"))return"DES";if(s.includes("NAVEG"))return"NAV";if(s.includes("ATRAC"))return"ATR";return null}
-function ext(s,fb){const m=(s||"").toString().toUpperCase().match(/\b[A-Z]{4}\d{7}\b/g);if(m)return uniq(m);const t=(s||"").toString().trim();return fb&&t?[t]:[]}
-function cids(r,i){return r.containers&&r.containers.length?r.containers:["L"+(r.blk!=null?r.blk:i)]}
+function cids(r,i){return r.containers&&r.containers.length?r.containers:["L"+i]}
 
-/* Formato plano (uma linha de cabeçalho PROCESSO) */
-function toObjs(rows){if(!rows.length)return[];
- const hi=rows.findIndex(r=>r.some(c=>norm(c)=="PROCESSO"));const h=rows[Math.max(hi,0)].map(norm);
- const idx=n=>h.indexOf(n);const qs=h.map((x,i)=>x=="QUANTIDADE"?i:-1).filter(i=>i>=0);
- const g=(r,n)=>{const i=idx(n);return i<0?"":(r[i]||"").trim()};
- return rows.slice(Math.max(hi,0)+1).map(r=>({
-  chegada:g(r,"DATA CHEGADA")||g(r,"DATA DE CHEGADA"),navio:g(r,"NAVIO"),armador:g(r,"ARMADOR"),agente:g(r,"AGENTE"),processo:g(r,"PROCESSO"),
-  equip:g(r,"EQUIPAMENTO"),container:g(r,"CONTAINER"),containers:ext(g(r,"CONTAINER"),true),codigo:g(r,"CODIGO"),produto:g(r,"PRODUTO"),status:g(r,"STATUS"),
-  qtd:num(qs.length?r[qs[qs.length-1]]:""),d:pd(g(r,"DATA CHEGADA")||g(r,"DATA DE CHEGADA")),blk:null})).filter(o=>o.processo||o.container||o.codigo)}
+/* Leitura plana da guia ITENS PREVISTOS CHEGADA PORTO: apenas DATA DE CHEGADA, CÓDIGO, PRODUTO, QUANTIDADE, STATUS */
+function toObjs(rows){
+ if(!rows||!rows.length)return[];
+ const hi=rows.findIndex(r=>{const h=r.map(norm);return h.includes("CODIGO")&&h.includes("PRODUTO")&&h.some(x=>x.startsWith("DATA DE CHEGADA")||x=="DATA CHEGADA")});
+ if(hi<0)throw new Error("Cabeçalho não encontrado (DATA DE CHEGADA, CÓDIGO, PRODUTO, QUANTIDADE, STATUS)");
+ const h=rows[hi].map(norm);
+ const find=fn=>h.findIndex(fn);
+ const iD=find(x=>x=="DATA DE CHEGADA"||x=="DATA CHEGADA"||x.startsWith("DATA DE CHEGADA"));
+ const iC=find(x=>x=="CODIGO");
+ const iP=find(x=>x=="PRODUTO");
+ const iQ=find(x=>x=="QUANTIDADE"||x.startsWith("QUANTIDADE"));
+ const iS=find(x=>x=="STATUS");
+ const g=(r,i)=>i<0?"":String(r[i]==null?"":r[i]).trim();
+ const out=[];
+ rows.slice(hi+1).forEach(r=>{
+  const codigo=g(r,iC),produto=g(r,iP);
+  if(!codigo&&!produto)return;
+  if(norm(codigo)=="CODIGO")return;
+  const chegada=g(r,iD);
+  out.push({chegada:chegada,navio:"",armador:"",agente:"",processo:"",equip:"",container:"",containers:["L"+out.length],
+   codigo:codigo,produto:produto,status:g(r,iS),qtd:num(g(r,iQ)),d:pd(chegada),blk:null})});
+ return out}
 
-/* Formato em blocos: cabeçalho repetido + AGENTE/TERMINAL/ARMADOR/STATUS nas linhas laterais */
-function toObjsBlocos(rows){
- const out=[];let blk=null,n=0;
- const isHead=r=>norm(r[0]).startsWith("DATA DE SAIDA")&&r.some(c=>norm(c)=="PROCESSO");
- const cell=(r,i)=>(i>=0&&r[i]!=null?String(r[i]):"").trim();
- const val=r=>{for(const i of [2,1,3]){const v=cell(r,i);if(v)return v}return""};
- const firstOf=(items,i)=>{for(const r of items){const v=cell(r,i);if(v)return v}return""};
- const flush=()=>{
-  if(!blk)return;const c=blk.c,it=blk.items;
-  const bChegada=firstOf(it,c.chegada),bEquip=firstOf(it,c.equip),bNavio=firstOf(it,c.navio),bCont=firstOf(it,c.cont),bProc=firstOf(it,c.proc);
-  it.forEach(r=>{
-   const cont=cell(r,c.cont)||bCont;
-   let cs=ext(cont,false);if(!cs.length)cs=[];
-   out.push({
-    chegada:bChegada,saida:firstOf(it,c.saida),navio:cell(r,c.navio)||bNavio,armador:blk.meta.armador||"",agente:blk.meta.agente||"",terminal:blk.meta.terminal||"",
-    processo:cell(r,c.proc)||bProc,fornecedor:cell(r,c.forn),equip:bEquip,container:cont,containers:cs,
-    codigo:cell(r,c.cod),produto:cell(r,c.prod),status:blk.meta.status||"",qtd:num(cell(r,c.qtd)),d:pd(bChegada),blk:blk.id})});
-  blk=null};
- for(const r of rows){
-  if(isHead(r)){flush();const h=r.map(norm);
-   const f=(nm,d)=>{const i=h.indexOf(nm);return i<0?d:i};
-   const qs=h.map((x,i)=>x=="QUANTIDADE"?i:-1).filter(i=>i>=0);
-   blk={id:n++,items:[],meta:{},c:{saida:f("DATA DE SAIDA",0),chegada:f("DATA DE CHEGADA",1),equip:f("EQUIPAMENTO",3),forn:f("FORNECEDOR",5),proc:f("PROCESSO",6),cod:f("CODIGO",8),prod:f("PRODUTO",9),qtd:qs.length>1?qs[qs.length-1]:10,navio:f("NAVIO",14),cont:f("CONTAINER",15)}};
-   continue}
-  if(!blk)continue;
-  const lab=norm(r[0]).replace(/:$/,"").trim();
-  if(lab.startsWith("AGENTE"))blk.meta.agente=val(r);
-  else if(lab=="TERMINAL")blk.meta.terminal=val(r);
-  else if(lab=="ARMADOR")blk.meta.armador=val(r);
-  else if(lab=="STATUS")blk.meta.status=val(r);
-  if(cell(r,blk.c.cod)||cell(r,blk.c.prod))blk.items.push(r)}
- flush();
- /* containers sem código ISO reconhecível: usa identificador do bloco */
- out.forEach(o=>{if(!o.containers.length)o.containers=["B"+o.blk+"|"+o.processo]});
- return out.filter(o=>o.processo||o.container||o.codigo)}
-
-function parseAny(text){const rows=parseCSV(text);let o=toObjsBlocos(rows);if(!o.length)o=toObjs(rows);return o}
+function parseAny(text){return toObjs(parseCSV(text))}
 
 /* Busca com fallback: direto -> proxies -> cache local */
+async function fetchTimeout(url,ms){
+ const ctl=typeof AbortController!="undefined"?new AbortController():null;
+ const tm=ctl?setTimeout(()=>ctl.abort(),ms):null;
+ try{return await fetch(url,{cache:"no-store",signal:ctl?ctl.signal:undefined})}
+ finally{if(tm)clearTimeout(tm)}}
 async function getText(url){
  const u=url+(url.includes("?")?"&":"?")+"t="+Date.now();
  const tries=[u,"https://api.allorigins.win/raw?url="+encodeURIComponent(u),"https://corsproxy.io/?"+encodeURIComponent(u)];
- let last=new Error("Falha");
+ let last=new Error("Falha ao acessar a planilha");
  for(const t of tries){
-  try{const r=await fetch(t,{cache:"no-store"});if(!r.ok)throw new Error("HTTP "+r.status);
-   const tx=await r.text();if(!tx||tx.trim().length<20||/^\s*<(!doctype|html)/i.test(tx))throw new Error("Resposta inválida");return tx}
+  try{
+   const r=await fetchTimeout(t,CONFIG.TIMEOUT_MS);
+   if(!r.ok)throw new Error("HTTP "+r.status);
+   const tx=await r.text();
+   if(!tx||tx.trim().length<20||/^\s*<(!doctype|html)/i.test(tx))throw new Error("Resposta inválida");
+   return tx}
   catch(e){last=e}}
  throw last}
 async function fetchSource(url,key){
- try{const t=await getText(url);const o=parseAny(t);if(!o.length)throw new Error("Sem linhas");lsSet(key,t);return{data:o,stale:false}}
- catch(e){const c=lsGet(key);if(c){const o=parseAny(c);if(o.length)return{data:o,stale:true}}throw e}}
+ try{
+  const t=await getText(url);
+  const o=parseAny(t);
+  if(!o.length)throw new Error("Sem linhas");
+  lsSet(key,t);
+  return{data:o,stale:false}}
+ catch(e){
+  const c=lsGet(key);
+  if(c){try{const o=parseAny(c);if(o.length)return{data:o,stale:true}}catch(x){}}
+  throw e}}
 
 async function load(){
+ if(loading)return;
  if(!CONFIG.ATRACACAO_URL){render();return}
+ loading=true;
  let stale=false,fail=false;
- try{const a=await fetchSource(CONFIG.ATRACACAO_URL,"ct_base");DATA.base=a.data;stale=stale||a.stale}
- catch(e){fail=true}
- if(CONFIG.CONCLUIDOS_URL){
-  try{const c=await fetchSource(CONFIG.CONCLUIDOS_URL,"ct_done");DATA.done=c.data;stale=stale||c.stale}
-  catch(e){}}
- if(fail&&!DATA.base.length)setMsg("Falha ao ler o Google Sheets. Verifique se a aba está publicada na web em formato CSV.",true);
- else if(stale)setMsg("Sem conexão com o Google Sheets. Exibindo os últimos dados salvos.",false);
- else{setMsg("");stamp()}
+ try{
+  try{const a=await fetchSource(CONFIG.ATRACACAO_URL,CONFIG.CACHE_KEY);DATA.base=a.data;stale=a.stale}
+  catch(e){fail=true}
+  if(CONFIG.CONCLUIDOS_URL){
+   try{const c=await fetchSource(CONFIG.CONCLUIDOS_URL,CONFIG.CACHE_KEY+"_done");DATA.done=c.data;stale=stale||c.stale}
+   catch(e){}}
+  if(fail&&!DATA.base.length)setMsg("Falha ao ler a guia ITENS PREVISTOS CHEGADA PORTO. Verifique se ela está publicada na web em formato CSV.",true);
+  else if(stale)setMsg("Sem conexão com o Google Sheets. Exibindo os últimos dados salvos.",false);
+  else{setMsg("");stamp()}
+ }finally{loading=false}
  render()}
 function stamp(){$("upd").textContent="Atualizado às "+new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
 
@@ -227,7 +237,7 @@ function bars(el,data,alt){if(!data.length){el.innerHTML='<div class="empty">Sem
 
 function render(){
  const doneP=new Set(DATA.done.map(r=>norm(r.processo)).filter(Boolean));
- const act=DATA.base.filter(r=>!doneP.has(norm(r.processo)));
+ const act=DATA.base.filter(r=>!r.processo||!doneP.has(norm(r.processo)));
  const cont={NAV:new Set(),VER:new Set(),DES:new Set(),ATR:new Set()};
  act.forEach((r,i)=>{const k=sk(r.status);if(k)cids(r,i).forEach(c=>cont[k].add(c))});
  const procs=uniq(act.map(r=>norm(r.processo)));
@@ -238,7 +248,7 @@ function render(){
  $("kpis").innerHTML=K.map(k=>`<div class="card kpi fade" style="--g:${k[3]}"><div class="l"><i class="dot" style="--c:${k[2]}"></i>${k[0]}</div><div class="v" data-n="${k[1]}">0</div><div class="n"></div></div>`).join("")+
   `<div class="card kpi fade" style="--g:rgba(10,132,255,.14)"><div class="l"><i class="dot" style="--c:#0A84FF"></i>Próxima atracação</div><div class="v sm">${nx?nx.d.toLocaleDateString("pt-BR",{day:"2-digit",month:"short"}):"-"}</div><div class="n">${nx?esc((nx.navio||"")+(nx.processo?" | "+nx.processo:"")):""}</div></div>`;
  document.querySelectorAll("#kpis .v[data-n]").forEach(e=>count(e,+e.dataset.n));
- if(!DATA.base.length&&!$("msg").textContent)setMsg("Nenhuma fonte de dados conectada. Informe os links CSV publicados em CONFIG no início do script, ou use Importar CSV.",false);
+ if(!DATA.base.length&&!$("msg").textContent)setMsg("Nenhuma fonte de dados conectada. Informe o link CSV publicado em CONFIG no início do script, ou use Importar CSV.",false);
 
  // timeline
  const gk={};fut.forEach(r=>{const k=[r.chegada,r.navio,r.processo].join("|");gk[k]=gk[k]||{...r,n:0,c:new Set()};gk[k].n++;gk[k].c.add(r.container)});
@@ -286,7 +296,11 @@ function drawItems(items){
  if($("mb"))$("mb").onclick=()=>{limit+=24;drawItems(items)}}
 
 $("rf").onclick=load;
-$("file").onchange=async e=>{for(const f of e.target.files){const o=parseAny(await f.text());if(norm(f.name).includes("CONCLU"))DATA.done=o;else DATA.base=o}stamp();setMsg("");render()};
+$("file").onchange=async e=>{
+ for(const f of e.target.files){
+  try{const o=parseAny(await f.text());if(norm(f.name).includes("CONCLU"))DATA.done=o;else DATA.base=o}
+  catch(err){setMsg("Arquivo inválido: "+err.message,true);return}}
+ stamp();setMsg("");render()};
 const secs=[...document.querySelectorAll("section")];
 addEventListener("scroll",()=>{let c=secs[0].id;secs.forEach(s=>{if(s.getBoundingClientRect().top<140)c=s.id});document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("on",a.getAttribute("href")=="#"+c))},{passive:true});
 load();if(CONFIG.REFRESH_MIN>0)setInterval(load,CONFIG.REFRESH_MIN*60000);
