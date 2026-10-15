@@ -106,12 +106,12 @@ h2{font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mt);
 <section id="concluidos"><h2>Concluídos</h2><div class="kpis" id="cc"></div></section>
 </main>
 <script>
+/* CONFIGURAÇÃO: cole aqui os links CSV publicados do Google Sheets (Arquivo > Compartilhar > Publicar na Web > CSV) */
 const CONFIG={
-  ATRACACAO_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vRRcjCz55sl17I4OMcz2AdS0J915NnR44p6A3is7fy-wcYuY9uh1e3tID0Z37qvsA/pub?gid=1115827490&single=true&output=csv",
-  CONCLUIDOS_URL:"",
+  ATRACACAO_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vQpwUyr7FOeVegXFogXIk7PzxUeUbkbja-IRGpdJz9o1kn4T6lV4NqH64XvY2Ywwo27Evzt4fTxoGIT/pub?gid=1115827490&single=true&output=csv",   // aba ATRACAÇÃO (base de processos)
+  CONCLUIDOS_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vQpwUyr7FOeVegXFogXIk7PzxUeUbkbja-IRGpdJz9o1kn4T6lV4NqH64XvY2Ywwo27Evzt4fTxoGIT/pub?gid=132831324&single=true&output=csv",  // aba CONCLUIDOS
   REFRESH_MIN:5
 };
-
 const ST={NAV:{n:"NAVEGANDO",c:"#30D158"},VER:{n:"CANAL VERMELHO",c:"#FF453F"},DES:{n:"EM PROC. DE DESOVA",c:"#FFD60A"},ATR:{n:"ATRACADO",c:"#0A84FF"}};
 const $=id=>document.getElementById(id);
 const norm=s=>(s||"").toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/\s+/g," ").trim();
@@ -126,14 +126,25 @@ function parseCSV(t){const r=[];let row=[],c="",q=false;t=t.replace(/^\uFEFF/,""
   else if(ch=="\n"||ch=="\r"){if(ch=="\r"&&t[i+1]=="\n")i++;row.push(c);r.push(row);row=[];c=""}
   else c+=ch}
  if(c||row.length){row.push(c);r.push(row)}return r.filter(x=>x.some(v=>v.trim()))}
-function toObjs(rows){if(!rows.length)return[];
- const hi=rows.findIndex(r=>r.some(c=>norm(c)=="PROCESSO"));const h=rows[Math.max(hi,0)].map(norm);
- const idx=n=>h.indexOf(n);const qs=h.map((x,i)=>x=="QUANTIDADE"?i:-1).filter(i=>i>=0);
- const g=(r,n)=>{const i=idx(n);return i<0?"":(r[i]||"").trim()};
- return rows.slice(Math.max(hi,0)+1).map(r=>({
-  chegada:g(r,"DATA CHEGADA"),navio:g(r,"NAVIO"),armador:g(r,"ARMADOR"),agente:g(r,"AGENTE"),processo:g(r,"PROCESSO"),
-  equip:g(r,"EQUIPAMENTO"),container:g(r,"CONTAINER"),codigo:g(r,"CODIGO"),produto:g(r,"PRODUTO"),status:g(r,"STATUS"),
-  qtd:num(qs.length?r[qs[qs.length-1]]:""),d:pd(g(r,"DATA CHEGADA"))})).filter(o=>o.processo||o.container||o.codigo)}
+const cnts=s=>{const m=(s||"").toUpperCase().match(/\b[A-Z]{4}\d{7}\b/g);return m?[...new Set(m)]:[]};
+function toObjs(rows){
+ const out=[];let H=null,blk=[],meta={};
+ const fill=k=>{const f=blk.find(o=>o[k]);if(f)blk.forEach(o=>{if(!o[k])o[k]=f[k]})};
+ const flush=()=>{["chegada","navio","container","equip"].forEach(fill);
+  blk.forEach(o=>{["armador","agente","status","terminal"].forEach(k=>{if(!o[k])o[k]=meta[k]||""});o.cs=cnts(o.container);o.d=pd(o.chegada);out.push(o)});
+  blk=[];meta={}};
+ for(const r of rows){
+  if(r.some(c=>norm(c)=="PROCESSO")){flush();const h=r.map(norm);H={h,qs:h.map((x,i)=>x=="QUANTIDADE"?i:-1).filter(i=>i>=0)};continue}
+  if(!H)continue;
+  for(let j=0;j<Math.min(r.length,3);j++){const k=norm(r[j]);if(!k.endsWith(":"))continue;
+   const key=k.startsWith("AGENTE")?"agente":k=="ARMADOR:"?"armador":k=="STATUS:"?"status":k=="TERMINAL:"?"terminal":null;
+   if(key){const v=r.slice(j+1,j+4).map(x=>(x||"").trim()).find(Boolean);if(v)meta[key]=v}}
+  const g=(...ns)=>{for(const n of ns){const i=H.h.indexOf(n);if(i>=0&&(r[i]||"").trim())return r[i].trim()}return""};
+  const o={chegada:g("DATA CHEGADA","DATA DE CHEGADA"),navio:g("NAVIO"),armador:g("ARMADOR"),agente:g("AGENTE","AGENTE DE CARGAS"),processo:g("PROCESSO"),
+   equip:g("EQUIPAMENTO"),container:g("CONTAINER"),codigo:g("CODIGO"),produto:g("PRODUTO"),status:g("STATUS"),terminal:"",
+   qtd:num(H.qs.length?r[H.qs[H.qs.length-1]]:"")};
+  if(o.processo||o.container||o.codigo)blk.push(o)}
+ flush();return out}
 function num(v){v=(v||"").toString().replace(/\./g,"").replace(",",".");const n=parseFloat(v);return isNaN(n)?0:n}
 function pd(s){let m=s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);if(m){let y=+m[3];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[1])}
  m=s.match(/(\d{4})-(\d{2})-(\d{2})/);return m?new Date(+m[1],+m[2]-1,+m[3]):null}
@@ -141,12 +152,16 @@ function sk(s){s=norm(s);if(s.includes("VERMELHO"))return"VER";if(s.includes("DE
 const uniq=a=>[...new Set(a.filter(Boolean))];
 
 async function load(){
- try{
-  if(!CONFIG.ATRACACAO_URL){render();return}
-  const [a,c]=await Promise.all([fetch(CONFIG.ATRACACAO_URL+(CONFIG.ATRACACAO_URL.includes("?")?"&":"?")+"t="+Date.now()).then(r=>r.text()),
-   CONFIG.CONCLUIDOS_URL?fetch(CONFIG.CONCLUIDOS_URL+(CONFIG.CONCLUIDOS_URL.includes("?")?"&":"?")+"t="+Date.now()).then(r=>r.text()):Promise.resolve("")]);
-  DATA.base=toObjs(parseCSV(a));DATA.done=c?toObjs(parseCSV(c)):[];stamp();render()
- }catch(e){$("msg").className="err";$("msg").textContent="Falha ao ler o Google Sheets. Verifique se as abas estão publicadas na web em formato CSV.";render()}}
+ if(!CONFIG.ATRACACAO_URL){render();return}
+ const get=async u=>{if(!u)return"";let r;
+  try{r=await fetch(u+(u.includes("?")?"&":"?")+"t="+Date.now())}catch(e){r=await fetch(u)}
+  if(!r.ok)throw new Error("HTTP "+r.status);const x=await r.text();
+  if(/^\s*</.test(x))throw new Error("a resposta não é CSV (aba não publicada?)");return x};
+ let a,c="";
+ try{[a,c]=await Promise.all([get(CONFIG.ATRACACAO_URL),get(CONFIG.CONCLUIDOS_URL)])}
+ catch(e){$("msg").className="err";$("msg").textContent="Falha ao baixar o Google Sheets ("+e.message+"). Abra o painel por um endereço https (ex.: GitHub Pages) e confirme que as abas estão publicadas na web em CSV.";render();return}
+ try{DATA.base=toObjs(parseCSV(a));DATA.done=c?toObjs(parseCSV(c)):[];$("msg").className="";$("msg").textContent="";stamp();render()}
+ catch(e){console.error(e);$("msg").className="err";$("msg").textContent="Dados baixados, mas houve erro ao processar: "+e.message}}
 function stamp(){$("upd").textContent="Atualizado às "+new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
 
 function count(el,to){const t0=performance.now();(function f(t){const p=Math.min((t-t0)/900,1);el.textContent=fmtN(Math.round(to*(1-Math.pow(1-p,3))));if(p<1)requestAnimationFrame(f)})(t0)}
@@ -161,7 +176,7 @@ function render(){
  const doneP=new Set(DATA.done.map(r=>norm(r.processo)).filter(Boolean));
  const act=DATA.base.filter(r=>!doneP.has(norm(r.processo)));
  const cont={NAV:new Set(),VER:new Set(),DES:new Set(),ATR:new Set()};
- act.forEach((r,i)=>{const k=sk(r.status);if(k)cont[k].add(r.container||"L"+i)});
+ act.forEach((r,i)=>{const k=sk(r.status);if(!k)return;(r.cs.length?r.cs:[r.container||"L"+i]).forEach(c=>cont[k].add(c))});
  const procs=uniq(act.map(r=>norm(r.processo)));
  const today=new Date();today.setHours(0,0,0,0);
  const fut=act.filter(r=>r.d&&r.d>=today).sort((a,b)=>a.d-b.d);
@@ -197,13 +212,13 @@ function render(){
  bars($("ag"),rank(act,"agente"));bars($("ar"),rank(act,"armador"),true);
 
  // equipamentos
- const em={};const seen=new Set();act.forEach((r,i)=>{const k=norm(r.equip).replace(/[’`´]/g,"'");if(!k)return;const id=k+"|"+(r.container||"L"+i);if(seen.has(id))return;seen.add(id);em[k]=(em[k]||0)+1});
+ const em={};const seen=new Set();act.forEach((r,i)=>{const k=norm(r.equip).replace(/[’`´]/g,"'");if(!k)return;(r.cs.length?r.cs:[r.container||"L"+i]).forEach(c=>{const id=k+"|"+c;if(seen.has(id))return;seen.add(id);em[k]=(em[k]||0)+1})});
  const ea=Object.entries(em).sort((a,b)=>b[1]-a[1]),et=ea.reduce((s,x)=>s+x[1],0);
  $("eq").innerHTML=ea.length?`<div class="items" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${ea.map(([k,v])=>{const p=v/et*100;return`<div class="card" style="background:rgba(255,255,255,.03)"><div style="font-size:12px;color:var(--mt)">${k}</div><div style="font-size:34px;font-weight:700;letter-spacing:-1px;margin:8px 0">${v}</div><div class="trk"><div class="fill alt" data-w="${p}"></div></div><div style="font-size:12px;color:var(--mt);margin-top:8px">${p.toFixed(1)}% de participação</div></div>`}).join("")}</div>`:'<div class="empty">Sem dados</div>';
  requestAnimationFrame(()=>requestAnimationFrame(()=>$("eq").querySelectorAll(".fill").forEach(f=>f.style.width=f.dataset.w+"%")));
 
  // concluidos
- const dp=uniq(DATA.done.map(r=>norm(r.processo))).length,dc=uniq(DATA.done.map(r=>norm(r.container))).length,dpr=uniq(DATA.done.map(r=>norm(r.codigo))).length,dq=DATA.done.reduce((s,r)=>s+r.qtd,0);
+ const dp=uniq(DATA.done.map(r=>norm(r.processo))).length,dc=new Set(DATA.done.flatMap(r=>r.cs.length?r.cs:[norm(r.container)]).filter(Boolean)).size,dpr=uniq(DATA.done.map(r=>norm(r.codigo||r.produto))).length,dq=DATA.done.reduce((s,r)=>s+r.qtd,0);
  $("cc").innerHTML=[["Processos concluídos",dp,"produtos distintos: "+dpr],["Containers recebidos",dc,""],["Produtos recebidos",dq,"unidades"+(dpr?" em "+dpr+" códigos":"")]].map(k=>`<div class="card kpi fade"><div class="l">${k[0]}</div><div class="v" data-n="${k[1]}">0</div><div class="n">${k[0]=="Processos concluídos"?"":k[2]}</div></div>`).join("");
  document.querySelectorAll("#cc .v[data-n]").forEach(e=>count(e,+e.dataset.n));
 }
