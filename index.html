@@ -1,13 +1,639 @@
 <!DOCTYPE html>
-<html>
+2
+<html lang="pt-BR">
+3
 <head>
-<title>Teste</title>
+4
+<meta charset="UTF-8">
+5
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+6
+<title>Importação MP</title>
+7
+ 
+8
+<style>
+9
+ 
+10
+*{
+11
+margin:0;
+12
+padding:0;
+13
+box-sizing:border-box;
+14
+font-family:'Segoe UI',sans-serif;
+15
+}
+16
+ 
+17
+body{
+18
+background:#f4f6f9;
+19
+padding:20px;
+20
+color:#333;
+21
+}
+22
+ 
+23
+.header{
+24
+background:linear-gradient(135deg,#0f172a,#1e3a8a);
+25
+color:white;
+26
+padding:30px;
+27
+border-radius:15px;
+28
+margin-bottom:20px;
+29
+}
+30
+ 
+31
+.header h1{
+32
+font-size:35px;
+33
+}
+34
+ 
+35
+.cards{
+36
+display:grid;
+37
+grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+38
+gap:15px;
+39
+margin-bottom:20px;
+40
+}
+41
+ 
+42
+.card{
+43
+background:white;
+44
+padding:20px;
+45
+border-radius:15px;
+46
+box-shadow:0 2px 10px rgba(0,0,0,.1);
+47
+}
+48
+ 
+49
+.card h3{
+50
+font-size:14px;
+51
+color:#666;
+52
+margin-bottom:10px;
+53
+}
+54
+ 
+55
+.card .numero{
+56
+font-size:36px;
+57
+font-weight:bold;
+58
+color:#0f172a;
+59
+}
+60
+ 
+61
+.section{
+62
+background:white;
+63
+margin-bottom:20px;
+64
+padding:20px;
+65
+border-radius:15px;
+66
+box-shadow:0 2px 10px rgba(0,0,0,.08);
+67
+}
+68
+ 
+69
+.section h2{
+70
+margin-bottom:15px;
+71
+color:#0f172a;
+72
+}
+73
+ 
+74
+table{
+75
+width:100%;
+76
+border-collapse:collapse;
+77
+}
+78
+ 
+79
+th{
+80
+background:#0f172a;
+81
+color:white;
+82
+padding:12px;
+83
+}
+84
+ 
+85
+td{
+86
+padding:10px;
+87
+border-bottom:1px solid #ddd;
+88
+}
+89
+ 
+90
+.status-red{
+91
+color:#dc2626;
+92
+font-weight:bold;
+93
+}
+94
+ 
+95
+.status-yellow{
+96
+color:#ca8a04;
+97
+font-weight:bold;
+98
+}
+99
+ 
+100
+.status-green{
+101
+color:#16a34a;
+102
+font-weight:bold;
+103
+}
+104
+ 
+105
+.rank{
+106
+display:flex;
+107
+justify-content:space-between;
+108
+padding:12px;
+109
+border-bottom:1px solid #eee;
+110
+}
+111
+ 
+112
+.footer{
+113
+text-align:center;
+114
+padding:20px;
+115
+color:#666;
+116
+}
+117
+ 
+118
+</style>
+119
 </head>
+120
+ 
+121
 <body>
-
-<h1>IMPORTAÇÃO MP</h1>
-
-<p>Dashboard ativo com sucesso.</p>
-
+122
+ 
+123
+<div class="header">
+124
+<h1>🚢 IMPORTAÇÃO MP</h1>
+125
+<p>Painel Operacional de Comércio Exterior</p>
+126
+</div>
+127
+ 
+128
+<div class="cards">
+129
+ 
+130
+<div class="card">
+131
+<h3>Containers Navegando</h3>
+132
+<div class="numero">18</div>
+133
+</div>
+134
+ 
+135
+<div class="card">
+136
+<h3>Atracados</h3>
+137
+<div class="numero">4</div>
+138
+</div>
+139
+ 
+140
+<div class="card">
+141
+<h3>Canal Vermelho</h3>
+142
+<div class="numero">2</div>
+143
+</div>
+144
+ 
+145
+<div class="card">
+146
+<h3>Processos Ativos</h3>
+147
+<div class="numero">24</div>
+148
+</div>
+149
+ 
+150
+</div>
+151
+ 
+152
+<div class="section">
+153
+ 
+154
+<h2>⚓ Próximas Atracações</h2>
+155
+ 
+156
+<table>
+157
+ 
+158
+<tr>
+159
+<th>ETA</th>
+160
+<th>Processo</th>
+161
+<th>Navio</th>
+162
+<th>Armador</th>
+163
+<th>Agente</th>
+164
+</tr>
+165
+ 
+166
+<tr>
+167
+<td>18/10</td>
+168
+<td>6576/26</td>
+169
+<td>MSC GRACE</td>
+170
+<td>MSC</td>
+171
+<td>SCM</td>
+172
+</tr>
+173
+ 
+174
+<tr>
+175
+<td>22/10</td>
+176
+<td>7014/26</td>
+177
+<td>LA HAVRE EXPRESS</td>
+178
+<td>HAPAG</td>
+179
+<td>SUNTRANS</td>
+180
+</tr>
+181
+ 
+182
+</table>
+183
+ 
+184
+</div>
+185
+ 
+186
+<div class="section">
+187
+ 
+188
+<h2>📦 Produtos Próximos da Chegada</h2>
+189
+ 
+190
+<table>
+191
+ 
+192
+<tr>
+193
+<th>Data</th>
+194
+<th>Código</th>
+195
+<th>Produto</th>
+196
+<th>Qtd</th>
+197
+<th>Status</th>
+198
+</tr>
+199
+ 
+200
+<tr>
+201
+<td>18/10</td>
+202
+<td>77218</td>
+203
+<td>ARAME FARPADO GALV</td>
+204
+<td>936</td>
+205
+<td class="status-red">CANAL VERMELHO</td>
+206
+</tr>
+207
+ 
+208
+<tr>
+209
+<td>21/10</td>
+210
+<td>47784</td>
+211
+<td>PERSIANA PVC</td>
+212
+<td>223</td>
+213
+<td class="status-green">NAVEGANDO</td>
+214
+</tr>
+215
+ 
+216
+</table>
+217
+ 
+218
+</div>
+219
+ 
+220
+<div class="section">
+221
+ 
+222
+<h2>📋 Status Operacional</h2>
+223
+ 
+224
+<div class="rank">
+225
+<span>NAVEGANDO</span>
+226
+<span>12</span>
+227
+</div>
+228
+ 
+229
+<div class="rank">
+230
+<span>EM PROC. DE DESOVA</span>
+231
+<span>4</span>
+232
+</div>
+233
+ 
+234
+<div class="rank">
+235
+<span>CANAL VERMELHO</span>
+236
+<span>2</span>
+237
+</div>
+238
+ 
+239
+</div>
+240
+ 
+241
+<div class="section">
+242
+ 
+243
+<h2>🏆 Ranking de Agentes</h2>
+244
+ 
+245
+<div class="rank">
+246
+<span>1º SUNTRANS</span>
+247
+<span>5 Processos</span>
+248
+</div>
+249
+ 
+250
+<div class="rank">
+251
+<span>2º SCM</span>
+252
+<span>3 Processos</span>
+253
+</div>
+254
+ 
+255
+<div class="rank">
+256
+<span>3º SUPPORT</span>
+257
+<span>2 Processos</span>
+258
+</div>
+259
+ 
+260
+</div>
+261
+ 
+262
+<div class="section">
+263
+ 
+264
+<h2>🚢 Ranking de Armadores</h2>
+265
+ 
+266
+<div class="rank">
+267
+<span>1º MSC</span>
+268
+<span>8 Containers</span>
+269
+</div>
+270
+ 
+271
+<div class="rank">
+272
+<span>2º HAPAG</span>
+273
+<span>5 Containers</span>
+274
+</div>
+275
+ 
+276
+<div class="rank">
+277
+<span>3º ONE</span>
+278
+<span>2 Containers</span>
+279
+</div>
+280
+ 
+281
+</div>
+282
+ 
+283
+<div class="section">
+284
+ 
+285
+<h2>📦 Equipamentos</h2>
+286
+ 
+287
+<div class="rank">
+288
+<span>40' HC</span>
+289
+<span>12</span>
+290
+</div>
+291
+ 
+292
+<div class="rank">
+293
+<span>40' GP</span>
+294
+<span>4</span>
+295
+</div>
+296
+ 
+297
+<div class="rank">
+298
+<span>20' GP</span>
+299
+<span>2</span>
+300
+</div>
+301
+ 
+302
+</div>
+303
+ 
+304
+<div class="section">
+305
+ 
+306
+<h2>✅ Concluídos</h2>
+307
+ 
+308
+<p>
+309
+Área destinada aos processos finalizados.
+310
+Basta copiar os processos concluídos para a aba CONCLUÍDOS.
+311
+</p>
+312
+ 
+313
+</div>
+314
+ 
+315
+<div class="footer">
+316
+Importação MP • Grupo Tupan / Distac
+317
+</div>
+318
+ 
+319
 </body>
+320
 </html>
