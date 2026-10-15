@@ -106,17 +106,23 @@ h2{font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:var(--mt);
 <section id="concluidos"><h2>Concluídos</h2><div class="kpis" id="cc"></div></section>
 </main>
 <script>
-/* CONFIGURAÇÃO: cole aqui os links CSV publicados do Google Sheets (Arquivo > Compartilhar > Publicar na Web > CSV) */
+/* CONFIGURAÇÃO: links CSV publicados do Google Sheets */
 const CONFIG={
-  ATRACACAO_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vQpwUyr7FOeVegXFogXIk7PzxUeUbkbja-IRGpdJz9o1kn4T6lV4NqH64XvY2Ywwo27Evzt4fTxoGIT/pub?gid=1115827490&single=true&output=csv",   // aba ATRACAÇÃO (base de processos)
-  CONCLUIDOS_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vQpwUyr7FOeVegXFogXIk7PzxUeUbkbja-IRGpdJz9o1kn4T6lV4NqH64XvY2Ywwo27Evzt4fTxoGIT/pub?gid=132831324&single=true&output=csv",  // aba CONCLUIDOS
-  REFRESH_MIN:5
+ ATRACACAO_URL:"https://docs.google.com/spreadsheets/d/e/2PACX-1vRRcjCz55sl17I4OMcz2AdS0J915NnR44p6A3is7fy-wcYuY9uh1e3tID0Z37qvsA/pub?gid=1115827490&single=true&output=csv",
+ CONCLUIDOS_URL:"",
+ REFRESH_MIN:5
 };
 const ST={NAV:{n:"NAVEGANDO",c:"#30D158"},VER:{n:"CANAL VERMELHO",c:"#FF453F"},DES:{n:"EM PROC. DE DESOVA",c:"#FFD60A"},ATR:{n:"ATRACADO",c:"#0A84FF"}};
 const $=id=>document.getElementById(id);
 const norm=s=>(s||"").toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/\s+/g," ").trim();
 const fmtN=n=>n.toLocaleString("pt-BR");
+const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const uniq=a=>[...new Set(a.filter(Boolean))];
 let DATA={base:[],done:[]},filter="ALL",limit=24,q="";
+
+function setMsg(t,err){const m=$("msg");m.textContent=t||"";m.className=err?"err":""}
+function lsGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 
 function parseCSV(t){const r=[];let row=[],c="",q=false;t=t.replace(/^\uFEFF/,"");
  for(let i=0;i<t.length;i++){const ch=t[i];
@@ -126,80 +132,126 @@ function parseCSV(t){const r=[];let row=[],c="",q=false;t=t.replace(/^\uFEFF/,""
   else if(ch=="\n"||ch=="\r"){if(ch=="\r"&&t[i+1]=="\n")i++;row.push(c);r.push(row);row=[];c=""}
   else c+=ch}
  if(c||row.length){row.push(c);r.push(row)}return r.filter(x=>x.some(v=>v.trim()))}
-const cnts=s=>{const m=(s||"").toUpperCase().match(/\b[A-Z]{4}\d{7}\b/g);return m?[...new Set(m)]:[]};
-function toObjs(rows){
- const out=[];let H=null,blk=[],meta={};
- const fill=k=>{const f=blk.find(o=>o[k]);if(f)blk.forEach(o=>{if(!o[k])o[k]=f[k]})};
- const flush=()=>{["chegada","navio","container","equip"].forEach(fill);
-  blk.forEach(o=>{["armador","agente","status","terminal"].forEach(k=>{if(!o[k])o[k]=meta[k]||""});o.cs=cnts(o.container);o.d=pd(o.chegada);out.push(o)});
-  blk=[];meta={}};
- for(const r of rows){
-  if(r.some(c=>norm(c)=="PROCESSO")){flush();const h=r.map(norm);H={h,qs:h.map((x,i)=>x=="QUANTIDADE"?i:-1).filter(i=>i>=0)};continue}
-  if(!H)continue;
-  for(let j=0;j<Math.min(r.length,3);j++){const k=norm(r[j]);if(!k.endsWith(":"))continue;
-   const key=k.startsWith("AGENTE")?"agente":k=="ARMADOR:"?"armador":k=="STATUS:"?"status":k=="TERMINAL:"?"terminal":null;
-   if(key){const v=r.slice(j+1,j+4).map(x=>(x||"").trim()).find(Boolean);if(v)meta[key]=v}}
-  const g=(...ns)=>{for(const n of ns){const i=H.h.indexOf(n);if(i>=0&&(r[i]||"").trim())return r[i].trim()}return""};
-  const o={chegada:g("DATA CHEGADA","DATA DE CHEGADA"),navio:g("NAVIO"),armador:g("ARMADOR"),agente:g("AGENTE","AGENTE DE CARGAS"),processo:g("PROCESSO"),
-   equip:g("EQUIPAMENTO"),container:g("CONTAINER"),codigo:g("CODIGO"),produto:g("PRODUTO"),status:g("STATUS"),terminal:"",
-   qtd:num(H.qs.length?r[H.qs[H.qs.length-1]]:"")};
-  if(o.processo||o.container||o.codigo)blk.push(o)}
- flush();return out}
+
 function num(v){v=(v||"").toString().replace(/\./g,"").replace(",",".");const n=parseFloat(v);return isNaN(n)?0:n}
-function pd(s){let m=s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);if(m){let y=+m[3];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[1])}
- m=s.match(/(\d{4})-(\d{2})-(\d{2})/);return m?new Date(+m[1],+m[2]-1,+m[3]):null}
+function pd(s){s=(s||"").toString();let m=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(m)return new Date(+m[1],+m[2]-1,+m[3]);
+ m=s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);if(m){let y=+m[3];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[1])}
+ return null}
 function sk(s){s=norm(s);if(s.includes("VERMELHO"))return"VER";if(s.includes("DESOVA")||s.includes("DESCOVA"))return"DES";if(s.includes("NAVEG"))return"NAV";if(s.includes("ATRAC"))return"ATR";return null}
-const uniq=a=>[...new Set(a.filter(Boolean))];
+function ext(s,fb){const m=(s||"").toString().toUpperCase().match(/\b[A-Z]{4}\d{7}\b/g);if(m)return uniq(m);const t=(s||"").toString().trim();return fb&&t?[t]:[]}
+function cids(r,i){return r.containers&&r.containers.length?r.containers:["L"+(r.blk!=null?r.blk:i)]}
+
+/* Formato plano (uma linha de cabeçalho PROCESSO) */
+function toObjs(rows){if(!rows.length)return[];
+ const hi=rows.findIndex(r=>r.some(c=>norm(c)=="PROCESSO"));const h=rows[Math.max(hi,0)].map(norm);
+ const idx=n=>h.indexOf(n);const qs=h.map((x,i)=>x=="QUANTIDADE"?i:-1).filter(i=>i>=0);
+ const g=(r,n)=>{const i=idx(n);return i<0?"":(r[i]||"").trim()};
+ return rows.slice(Math.max(hi,0)+1).map(r=>({
+  chegada:g(r,"DATA CHEGADA")||g(r,"DATA DE CHEGADA"),navio:g(r,"NAVIO"),armador:g(r,"ARMADOR"),agente:g(r,"AGENTE"),processo:g(r,"PROCESSO"),
+  equip:g(r,"EQUIPAMENTO"),container:g(r,"CONTAINER"),containers:ext(g(r,"CONTAINER"),true),codigo:g(r,"CODIGO"),produto:g(r,"PRODUTO"),status:g(r,"STATUS"),
+  qtd:num(qs.length?r[qs[qs.length-1]]:""),d:pd(g(r,"DATA CHEGADA")||g(r,"DATA DE CHEGADA")),blk:null})).filter(o=>o.processo||o.container||o.codigo)}
+
+/* Formato em blocos: cabeçalho repetido + AGENTE/TERMINAL/ARMADOR/STATUS nas linhas laterais */
+function toObjsBlocos(rows){
+ const out=[];let blk=null,n=0;
+ const isHead=r=>norm(r[0]).startsWith("DATA DE SAIDA")&&r.some(c=>norm(c)=="PROCESSO");
+ const cell=(r,i)=>(i>=0&&r[i]!=null?String(r[i]):"").trim();
+ const val=r=>{for(const i of [2,1,3]){const v=cell(r,i);if(v)return v}return""};
+ const firstOf=(items,i)=>{for(const r of items){const v=cell(r,i);if(v)return v}return""};
+ const flush=()=>{
+  if(!blk)return;const c=blk.c,it=blk.items;
+  const bChegada=firstOf(it,c.chegada),bEquip=firstOf(it,c.equip),bNavio=firstOf(it,c.navio),bCont=firstOf(it,c.cont),bProc=firstOf(it,c.proc);
+  it.forEach(r=>{
+   const cont=cell(r,c.cont)||bCont;
+   let cs=ext(cont,false);if(!cs.length)cs=[];
+   out.push({
+    chegada:bChegada,saida:firstOf(it,c.saida),navio:cell(r,c.navio)||bNavio,armador:blk.meta.armador||"",agente:blk.meta.agente||"",terminal:blk.meta.terminal||"",
+    processo:cell(r,c.proc)||bProc,fornecedor:cell(r,c.forn),equip:bEquip,container:cont,containers:cs,
+    codigo:cell(r,c.cod),produto:cell(r,c.prod),status:blk.meta.status||"",qtd:num(cell(r,c.qtd)),d:pd(bChegada),blk:blk.id})});
+  blk=null};
+ for(const r of rows){
+  if(isHead(r)){flush();const h=r.map(norm);
+   const f=(nm,d)=>{const i=h.indexOf(nm);return i<0?d:i};
+   const qs=h.map((x,i)=>x=="QUANTIDADE"?i:-1).filter(i=>i>=0);
+   blk={id:n++,items:[],meta:{},c:{saida:f("DATA DE SAIDA",0),chegada:f("DATA DE CHEGADA",1),equip:f("EQUIPAMENTO",3),forn:f("FORNECEDOR",5),proc:f("PROCESSO",6),cod:f("CODIGO",8),prod:f("PRODUTO",9),qtd:qs.length>1?qs[qs.length-1]:10,navio:f("NAVIO",14),cont:f("CONTAINER",15)}};
+   continue}
+  if(!blk)continue;
+  const lab=norm(r[0]).replace(/:$/,"").trim();
+  if(lab.startsWith("AGENTE"))blk.meta.agente=val(r);
+  else if(lab=="TERMINAL")blk.meta.terminal=val(r);
+  else if(lab=="ARMADOR")blk.meta.armador=val(r);
+  else if(lab=="STATUS")blk.meta.status=val(r);
+  if(cell(r,blk.c.cod)||cell(r,blk.c.prod))blk.items.push(r)}
+ flush();
+ /* containers sem código ISO reconhecível: usa identificador do bloco */
+ out.forEach(o=>{if(!o.containers.length)o.containers=["B"+o.blk+"|"+o.processo]});
+ return out.filter(o=>o.processo||o.container||o.codigo)}
+
+function parseAny(text){const rows=parseCSV(text);let o=toObjsBlocos(rows);if(!o.length)o=toObjs(rows);return o}
+
+/* Busca com fallback: direto -> proxies -> cache local */
+async function getText(url){
+ const u=url+(url.includes("?")?"&":"?")+"t="+Date.now();
+ const tries=[u,"https://api.allorigins.win/raw?url="+encodeURIComponent(u),"https://corsproxy.io/?"+encodeURIComponent(u)];
+ let last=new Error("Falha");
+ for(const t of tries){
+  try{const r=await fetch(t,{cache:"no-store"});if(!r.ok)throw new Error("HTTP "+r.status);
+   const tx=await r.text();if(!tx||tx.trim().length<20||/^\s*<(!doctype|html)/i.test(tx))throw new Error("Resposta inválida");return tx}
+  catch(e){last=e}}
+ throw last}
+async function fetchSource(url,key){
+ try{const t=await getText(url);const o=parseAny(t);if(!o.length)throw new Error("Sem linhas");lsSet(key,t);return{data:o,stale:false}}
+ catch(e){const c=lsGet(key);if(c){const o=parseAny(c);if(o.length)return{data:o,stale:true}}throw e}}
 
 async function load(){
  if(!CONFIG.ATRACACAO_URL){render();return}
- const get=async u=>{if(!u)return"";let r;
-  try{r=await fetch(u+(u.includes("?")?"&":"?")+"t="+Date.now())}catch(e){r=await fetch(u)}
-  if(!r.ok)throw new Error("HTTP "+r.status);const x=await r.text();
-  if(/^\s*</.test(x))throw new Error("a resposta não é CSV (aba não publicada?)");return x};
- let a,c="";
- try{[a,c]=await Promise.all([get(CONFIG.ATRACACAO_URL),get(CONFIG.CONCLUIDOS_URL)])}
- catch(e){$("msg").className="err";$("msg").textContent="Falha ao baixar o Google Sheets ("+e.message+"). Abra o painel por um endereço https (ex.: GitHub Pages) e confirme que as abas estão publicadas na web em CSV.";render();return}
- try{DATA.base=toObjs(parseCSV(a));DATA.done=c?toObjs(parseCSV(c)):[];$("msg").className="";$("msg").textContent="";stamp();render()}
- catch(e){console.error(e);$("msg").className="err";$("msg").textContent="Dados baixados, mas houve erro ao processar: "+e.message}}
+ let stale=false,fail=false;
+ try{const a=await fetchSource(CONFIG.ATRACACAO_URL,"ct_base");DATA.base=a.data;stale=stale||a.stale}
+ catch(e){fail=true}
+ if(CONFIG.CONCLUIDOS_URL){
+  try{const c=await fetchSource(CONFIG.CONCLUIDOS_URL,"ct_done");DATA.done=c.data;stale=stale||c.stale}
+  catch(e){}}
+ if(fail&&!DATA.base.length)setMsg("Falha ao ler o Google Sheets. Verifique se a aba está publicada na web em formato CSV.",true);
+ else if(stale)setMsg("Sem conexão com o Google Sheets. Exibindo os últimos dados salvos.",false);
+ else{setMsg("");stamp()}
+ render()}
 function stamp(){$("upd").textContent="Atualizado às "+new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
 
 function count(el,to){const t0=performance.now();(function f(t){const p=Math.min((t-t0)/900,1);el.textContent=fmtN(Math.round(to*(1-Math.pow(1-p,3))));if(p<1)requestAnimationFrame(f)})(t0)}
-function rank(rows,key){const m={};const seen={};rows.forEach(r=>{const k=norm(r[key]);if(!k)return;const p=r.processo||r.container||Math.random();(seen[k]=seen[k]||new Set()).add(p)});
+function rank(rows,key){const seen={};rows.forEach(r=>{const k=norm(r[key]);if(!k)return;const p=r.processo||r.container||Math.random();(seen[k]=seen[k]||new Set()).add(p)});
  return Object.entries(seen).map(([k,s])=>[k,s.size]).sort((a,b)=>b[1]-a[1])}
 function bars(el,data,alt){if(!data.length){el.innerHTML='<div class="empty">Sem dados</div>';return}
  const mx=data[0][1],tot=data.reduce((s,x)=>s+x[1],0);
- el.innerHTML=data.map(([k,v])=>`<div class="bar"><div class="h"><span>${k}</span><span>${v} processos | ${(v/tot*100).toFixed(0)}%</span></div><div class="trk"><div class="fill ${alt?"alt":""}" data-w="${v/mx*100}"></div></div></div>`).join("");
+ el.innerHTML=data.map(([k,v])=>`<div class="bar"><div class="h"><span>${esc(k)}</span><span>${v} processos | ${(v/tot*100).toFixed(0)}%</span></div><div class="trk"><div class="fill ${alt?"alt":""}" data-w="${v/mx*100}"></div></div></div>`).join("");
  requestAnimationFrame(()=>requestAnimationFrame(()=>el.querySelectorAll(".fill").forEach(f=>f.style.width=f.dataset.w+"%")))}
 
 function render(){
  const doneP=new Set(DATA.done.map(r=>norm(r.processo)).filter(Boolean));
  const act=DATA.base.filter(r=>!doneP.has(norm(r.processo)));
  const cont={NAV:new Set(),VER:new Set(),DES:new Set(),ATR:new Set()};
- act.forEach((r,i)=>{const k=sk(r.status);if(!k)return;(r.cs.length?r.cs:[r.container||"L"+i]).forEach(c=>cont[k].add(c))});
+ act.forEach((r,i)=>{const k=sk(r.status);if(k)cids(r,i).forEach(c=>cont[k].add(c))});
  const procs=uniq(act.map(r=>norm(r.processo)));
  const today=new Date();today.setHours(0,0,0,0);
  const fut=act.filter(r=>r.d&&r.d>=today).sort((a,b)=>a.d-b.d);
  const nx=fut[0];
  const K=[["Containers navegando",cont.NAV.size,ST.NAV.c,"rgba(48,209,88,.14)"],["Containers atracados",cont.ATR.size,ST.ATR.c,"rgba(10,132,255,.14)"],["Canal vermelho",cont.VER.size,ST.VER.c,"rgba(255,69,63,.14)"],["Em processo de desova",cont.DES.size,ST.DES.c,"rgba(255,214,10,.12)"],["Processos ativos",procs.length,"#F5F5F7","rgba(255,255,255,.08)"]];
  $("kpis").innerHTML=K.map(k=>`<div class="card kpi fade" style="--g:${k[3]}"><div class="l"><i class="dot" style="--c:${k[2]}"></i>${k[0]}</div><div class="v" data-n="${k[1]}">0</div><div class="n"></div></div>`).join("")+
-  `<div class="card kpi fade" style="--g:rgba(10,132,255,.14)"><div class="l"><i class="dot" style="--c:#0A84FF"></i>Próxima atracação</div><div class="v sm">${nx?nx.d.toLocaleDateString("pt-BR",{day:"2-digit",month:"short"}):"-"}</div><div class="n">${nx?(nx.navio||"")+(nx.processo?" | "+nx.processo:""):""}</div></div>`;
+  `<div class="card kpi fade" style="--g:rgba(10,132,255,.14)"><div class="l"><i class="dot" style="--c:#0A84FF"></i>Próxima atracação</div><div class="v sm">${nx?nx.d.toLocaleDateString("pt-BR",{day:"2-digit",month:"short"}):"-"}</div><div class="n">${nx?esc((nx.navio||"")+(nx.processo?" | "+nx.processo:"")):""}</div></div>`;
  document.querySelectorAll("#kpis .v[data-n]").forEach(e=>count(e,+e.dataset.n));
- if(!DATA.base.length&&!$("msg").className)$("msg").textContent="Nenhuma fonte de dados conectada. Informe os links CSV publicados em CONFIG no início do script, ou use Importar CSV.";
- else if(DATA.base.length)$("msg").textContent="",$("msg").className="";
+ if(!DATA.base.length&&!$("msg").textContent)setMsg("Nenhuma fonte de dados conectada. Informe os links CSV publicados em CONFIG no início do script, ou use Importar CSV.",false);
 
  // timeline
  const gk={};fut.forEach(r=>{const k=[r.chegada,r.navio,r.processo].join("|");gk[k]=gk[k]||{...r,n:0,c:new Set()};gk[k].n++;gk[k].c.add(r.container)});
  const tl=Object.values(gk).slice(0,8);
  $("tl").innerHTML=tl.length?tl.map((r,i)=>{const dd=Math.round((r.d-today)/864e5);
   return`<div class="ti ${i?"":"first"} fade" style="animation-delay:${i*.07}s"><div class="card"><div class="row"><span class="d">${r.d.toLocaleDateString("pt-BR",{day:"2-digit",month:"long",year:"numeric"})}</span><span class="dd">${dd==0?"Hoje":dd==1?"Amanhã":"em "+dd+" dias"}</span></div>
-  <div class="meta"><div><span>Navio</span><b>${r.navio||"-"}</b></div><div><span>Armador</span><b>${r.armador||"-"}</b></div><div><span>Agente</span><b>${r.agente||"-"}</b></div><div><span>Processo</span><b>${r.processo||"-"}</b></div></div></div></div>`}).join(""):'<div class="card empty">Nenhuma atracação futura encontrada</div>';
+  <div class="meta"><div><span>Navio</span><b>${esc(r.navio)||"-"}</b></div><div><span>Armador</span><b>${esc(r.armador)||"-"}</b></div><div><span>Agente</span><b>${esc(r.agente)||"-"}</b></div><div><span>Processo</span><b>${esc(r.processo)||"-"}</b></div></div></div></div>`}).join(""):'<div class="card empty">Nenhuma atracação futura encontrada</div>';
 
  // items
- const items=act.filter(r=>r.codigo&&["NAV","VER","DES"].includes(sk(r.status))).sort((a,b)=>(a.d||1e15)-(b.d||1e15));
- $("tools").innerHTML=[["ALL","Todos"],["NAV","Navegando"],["VER","Canal vermelho"],["DES","Em desova"]].map(([k,l])=>`<button class="chip ${filter==k?"on":""}" data-f="${k}">${l}</button>`).join("")+`<input class="search" id="q" placeholder="Buscar código ou descrição" value="${q}">`;
+ const items=act.filter(r=>r.codigo&&["NAV","VER","DES"].includes(sk(r.status))).sort((a,b)=>(a.d?a.d.getTime():1e15)-(b.d?b.d.getTime():1e15));
+ $("tools").innerHTML=[["ALL","Todos"],["NAV","Navegando"],["VER","Canal vermelho"],["DES","Em desova"]].map(([k,l])=>`<button class="chip ${filter==k?"on":""}" data-f="${k}">${l}</button>`).join("")+`<input class="search" id="q" placeholder="Buscar código ou descrição" value="${esc(q)}">`;
  $("tools").querySelectorAll(".chip").forEach(b=>b.onclick=()=>{filter=b.dataset.f;limit=24;render()});
- $("q").oninput=e=>{q=e.target.value;limit=24;const p=e.target.selectionStart;drawItems(items);};
+ $("q").oninput=e=>{q=e.target.value;limit=24;drawItems(items)};
  drawItems(items);
 
  // donut
@@ -212,24 +264,29 @@ function render(){
  bars($("ag"),rank(act,"agente"));bars($("ar"),rank(act,"armador"),true);
 
  // equipamentos
- const em={};const seen=new Set();act.forEach((r,i)=>{const k=norm(r.equip).replace(/[’`´]/g,"'");if(!k)return;(r.cs.length?r.cs:[r.container||"L"+i]).forEach(c=>{const id=k+"|"+c;if(seen.has(id))return;seen.add(id);em[k]=(em[k]||0)+1})});
+ const em={};const seen=new Set();
+ act.forEach((r,i)=>{const k=norm(r.equip).replace(/[’`´]/g,"'");if(!k)return;
+  cids(r,i).forEach(c=>{const id=k+"|"+c;if(seen.has(id))return;seen.add(id);em[k]=(em[k]||0)+1})});
  const ea=Object.entries(em).sort((a,b)=>b[1]-a[1]),et=ea.reduce((s,x)=>s+x[1],0);
- $("eq").innerHTML=ea.length?`<div class="items" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${ea.map(([k,v])=>{const p=v/et*100;return`<div class="card" style="background:rgba(255,255,255,.03)"><div style="font-size:12px;color:var(--mt)">${k}</div><div style="font-size:34px;font-weight:700;letter-spacing:-1px;margin:8px 0">${v}</div><div class="trk"><div class="fill alt" data-w="${p}"></div></div><div style="font-size:12px;color:var(--mt);margin-top:8px">${p.toFixed(1)}% de participação</div></div>`}).join("")}</div>`:'<div class="empty">Sem dados</div>';
+ $("eq").innerHTML=ea.length?`<div class="items" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${ea.map(([k,v])=>{const p=v/et*100;return`<div class="card" style="background:rgba(255,255,255,.03)"><div style="font-size:12px;color:var(--mt)">${esc(k)}</div><div style="font-size:34px;font-weight:700;letter-spacing:-1px;margin:8px 0">${v}</div><div class="trk"><div class="fill alt" data-w="${p}"></div></div><div style="font-size:12px;color:var(--mt);margin-top:8px">${p.toFixed(1)}% de participação</div></div>`}).join("")}</div>`:'<div class="empty">Sem dados</div>';
  requestAnimationFrame(()=>requestAnimationFrame(()=>$("eq").querySelectorAll(".fill").forEach(f=>f.style.width=f.dataset.w+"%")));
 
  // concluidos
- const dp=uniq(DATA.done.map(r=>norm(r.processo))).length,dc=new Set(DATA.done.flatMap(r=>r.cs.length?r.cs:[norm(r.container)]).filter(Boolean)).size,dpr=uniq(DATA.done.map(r=>norm(r.codigo||r.produto))).length,dq=DATA.done.reduce((s,r)=>s+r.qtd,0);
- $("cc").innerHTML=[["Processos concluídos",dp,"produtos distintos: "+dpr],["Containers recebidos",dc,""],["Produtos recebidos",dq,"unidades"+(dpr?" em "+dpr+" códigos":"")]].map(k=>`<div class="card kpi fade"><div class="l">${k[0]}</div><div class="v" data-n="${k[1]}">0</div><div class="n">${k[0]=="Processos concluídos"?"":k[2]}</div></div>`).join("");
+ const dp=uniq(DATA.done.map(r=>norm(r.processo))).length;
+ const dcSet=new Set();DATA.done.forEach((r,i)=>cids(r,i).forEach(c=>dcSet.add(c)));
+ const dc=dcSet.size;
+ const dpr=uniq(DATA.done.map(r=>norm(r.codigo))).length,dq=DATA.done.reduce((s,r)=>s+r.qtd,0);
+ $("cc").innerHTML=[["Processos concluídos",dp,""],["Containers recebidos",dc,""],["Produtos recebidos",dq,"unidades"+(dpr?" em "+dpr+" códigos":"")]].map(k=>`<div class="card kpi fade"><div class="l">${k[0]}</div><div class="v" data-n="${k[1]}">0</div><div class="n">${k[2]}</div></div>`).join("");
  document.querySelectorAll("#cc .v[data-n]").forEach(e=>count(e,+e.dataset.n));
 }
 function drawItems(items){
  const f=items.filter(r=>(filter=="ALL"||sk(r.status)==filter)&&(!q||norm(r.codigo+" "+r.produto).includes(norm(q))));
- $("items").innerHTML=f.length?f.slice(0,limit).map(r=>{const k=sk(r.status);return`<div class="card it fade"><div class="code">${r.codigo}</div><div class="desc">${r.produto||"-"}</div><div class="foot"><div class="qty">${fmtN(r.qtd)} <small>un.</small></div><span class="pill" style="--c:${ST[k].c}">${ST[k].n}</span></div></div>`}).join(""):'<div class="card empty" style="grid-column:1/-1">Nenhum item encontrado</div>';
+ $("items").innerHTML=f.length?f.slice(0,limit).map(r=>{const k=sk(r.status);return`<div class="card it fade"><div class="code">${esc(r.codigo)}</div><div class="desc">${esc(r.produto)||"-"}</div><div class="foot"><div class="qty">${fmtN(r.qtd)} <small>un.</small></div><span class="pill" style="--c:${ST[k].c}">${ST[k].n}</span></div></div>`}).join(""):'<div class="card empty" style="grid-column:1/-1">Nenhum item encontrado</div>';
  $("more").innerHTML=f.length>limit?`<button class="btn" id="mb">Ver mais (${f.length-limit})</button>`:"";
  if($("mb"))$("mb").onclick=()=>{limit+=24;drawItems(items)}}
 
 $("rf").onclick=load;
-$("file").onchange=async e=>{for(const f of e.target.files){const o=toObjs(parseCSV(await f.text()));if(norm(f.name).includes("CONCLU"))DATA.done=o;else DATA.base=o}stamp();$("msg").textContent="";render()};
+$("file").onchange=async e=>{for(const f of e.target.files){const o=parseAny(await f.text());if(norm(f.name).includes("CONCLU"))DATA.done=o;else DATA.base=o}stamp();setMsg("");render()};
 const secs=[...document.querySelectorAll("section")];
 addEventListener("scroll",()=>{let c=secs[0].id;secs.forEach(s=>{if(s.getBoundingClientRect().top<140)c=s.id});document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("on",a.getAttribute("href")=="#"+c))},{passive:true});
 load();if(CONFIG.REFRESH_MIN>0)setInterval(load,CONFIG.REFRESH_MIN*60000);
