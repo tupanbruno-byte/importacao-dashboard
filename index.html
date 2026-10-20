@@ -39,8 +39,28 @@ function pd(v) {
   if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return new Date(+m[1], m[2] - 1, +m[3]);
   return null;
 }
-const load = url => new Promise((res, rej) =>
-  Papa.parse(url + '&_t=' + Date.now(), { download: true, skipEmptyLines: false, complete: r => res(r.data), error: rej }));
+/* ========= CARREGAMENTO DE CSV (CORS-safe) ========= */
+const fetchText = async (endpoint) => {
+  const response = await fetch(endpoint, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Erro ao carregar CSV (' + response.status + ')');
+  const text = (await response.text()).replace(/^\uFEFF/, '');
+  if (/^\s*<(!doctype|html)/i.test(text)) throw new Error('Resposta inválida (HTML em vez de CSV)');
+  return text;
+};
+const load = async (url) => {
+  const full = url + '&_t=' + Date.now();
+  const endpoints = [
+    'https://corsproxy.io/?' + encodeURIComponent(full),
+    full,
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(full)
+  ];
+  let text = null, lastErr = null;
+  for (const ep of endpoints) {
+    try { text = await fetchText(ep); if (text && text.trim()) break; } catch (e) { lastErr = e; }
+  }
+  if (!text) throw lastErr || new Error('Erro ao carregar CSV');
+  return Papa.parse(text, { download: false, skipEmptyLines: false }).data;
+};
 
 /* ========= PARSE: ATRACAÇÃO (blocos) ========= */
 function parseAtr(rows) {
@@ -64,7 +84,7 @@ function parseAtr(rows) {
     }
     const code = clean(r[H.CODIGO]), prod = clean(r[H.PRODUTO]);
     if (code || prod) cur.items.push({
-      code, prod, qty: num(r[H.qi]), proc: clean(r[H.PROCESSO]), forn: clean(r[H.FORNECEDOR]), desp: clean(r[H.DESPACHANTE]),
+      code, prod, qty: num(r[H.qi]), proc: clean(r[H.PROCESSO]), forn: clean(r[H.FORNECEDOR]), desp: clean(r[H.DESPACHANTE] ?? r[H.DEPACHANTE]),
       navio: clean(r[H.NAVIO]), cont: clean(r[H.CONTAINER]), invoice: clean(r[H.INVOICE])
     });
   });
