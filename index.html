@@ -1,228 +1,325 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Control Tower Importação Distac</title>
+'use strict';
+/* ========= CONFIGURAÇÃO ========= */
+const CFG = {
+  atr:   'https://docs.google.com/spreadsheets/d/e/2PACX-1vRRcjCz55sl17I4OMcz2AdS0J915NnR44p6A3is7fy-wcYuY9uh1e3tID0Z37qvsA/pub?gid=1115827490&single=true&output=csv',
+  itens: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRRcjCz55sl17I4OMcz2AdS0J915NnR44p6A3is7fy-wcYuY9uh1e3tID0Z37qvsA/pub?gid=26038848&single=true&output=csv',
+  refreshMs: 5 * 60 * 1000,   // atualização automática
+  soonDays: 30                // janela de "Próximas Chegadas"
+};
+// Classificação do STATUS da planilha em grupos (ajuste os regex se surgirem novos status)
+const GROUPS = [
+  ['Navegando', /NAVEG/],
+  ['Embarcado', /EMBARC|AG\.? ?SAIDA|AGUARD|CARREGAD/],
+  ['Atracado',  /ATRAC|DESOVA|CANAL|PORTO|NACIONAL|DESEMBARA|LIBERAD|ENTREGUE/]
+];
+const COLORS = { Navegando: '#0a84ff', Embarcado: '#ff9f0a', Atracado: '#30d158', Outros: '#8e8e93' };
 
-<style>
-*{
-    margin:0;
-    padding:0;
-    box-sizing:border-box;
-    font-family:Segoe UI,Arial,sans-serif;
+/* ========= UTILS ========= */
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const norm = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nf = new Intl.NumberFormat('pt-BR');
+const grp = st => { const n = norm(st); for (const [g, re] of GROUPS) if (re.test(n)) return g; return 'Outros'; };
+const day0 = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const TODAY = () => day0(new Date());
+const fmtD = d => d ? d.toLocaleDateString('pt-BR') : '—';
+function num(v) {
+  let s = String(v ?? '').replace(/[^\d.,-]/g, ''); if (!s) return 0;
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); else s = s.replace(',', '.');
+  return parseFloat(s) || 0;
 }
-body{
-    background:#0f172a;
-    color:#fff;
+function pd(v) {
+  if (v instanceof Date) return v;
+  const s = String(v ?? '').trim(); let m;
+  if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/))) {
+    let d = +m[1], mo = +m[2], y = +m[3]; if (y < 100) y += 2000; if (mo > 12) [d, mo] = [mo, d];
+    return new Date(y, mo - 1, d);
+  }
+  if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return new Date(+m[1], m[2] - 1, +m[3]);
+  return null;
 }
-header{
-    padding:25px;
-    background:#111827;
-    border-bottom:1px solid #374151;
-}
-h1{
-    font-size:28px;
-}
-.subtitle{
-    color:#94a3b8;
-    margin-top:5px;
-}
-.cards{
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-    gap:20px;
-    padding:20px;
-}
-.card{
-    background:#1e293b;
-    padding:20px;
-    border-radius:16px;
-    box-shadow:0 0 15px rgba(0,0,0,.25);
-}
-.card h2{
-    color:#94a3b8;
-    font-size:14px;
-    margin-bottom:10px;
-}
-.card p{
-    font-size:30px;
-    font-weight:bold;
-}
-.section{
-    padding:20px;
-}
-.box{
-    background:#1e293b;
-    padding:20px;
-    border-radius:16px;
-    overflow:auto;
-}
-input{
-    width:100%;
-    padding:12px;
-    border:none;
-    border-radius:10px;
-    margin-bottom:15px;
-    background:#0f172a;
-    color:white;
-}
-table{
-    width:100%;
-    border-collapse:collapse;
-}
-th{
-    background:#334155;
-    padding:10px;
-    text-align:left;
-}
-td{
-    padding:10px;
-    border-bottom:1px solid #334155;
-}
-footer{
-    text-align:center;
-    padding:20px;
-    color:#94a3b8;
-}
-</style>
-</head>
+const load = url => new Promise((res, rej) =>
+  Papa.parse(url + '&_t=' + Date.now(), { download: true, skipEmptyLines: false, complete: r => res(r.data), error: rej }));
 
-<body>
-
-<header>
-<h1>🚢 Control Tower Importação Distac</h1>
-<p class="subtitle">
-Monitoramento operacional de embarques e itens previstos
-</p>
-</header>
-
-<div class="cards">
-
-<div class="card">
-<h2>Itens Previstos</h2>
-<p id="itensPrevistos">0</p>
-</div>
-
-<div class="card">
-<h2>Processos Atracação</h2>
-<p id="atracacoes">0</p>
-</div>
-
-<div class="card">
-<h2>Última Atualização</h2>
-<p id="atualizacao" style="font-size:16px;">--</p>
-</div>
-
-</div>
-
-<div class="section">
-<div class="box">
-
-<h2 style="margin-bottom:15px;">
-📦 ITENS PREVISTOS CHEGADA PORTO
-</h2>
-
-<input
-type="text"
-id="buscaItens"
-placeholder="Pesquisar produto, código ou marca..."
->
-
-<table id="tabelaItens">
-<thead></thead>
-<tbody></tbody>
-</table>
-
-</div>
-</div>
-
-<script>
-
-const csvItens =
-'https://docs.google.com/spreadsheets/d/e/2PACX-1vRRcjCz55sl17I4OMcz2AdS0J915NnR44p6A3is7fy-wcYuY9uh1e3tID0Z37qvsA/pub?gid=26038848&single=true&output=csv';
-
-const csvAtracacao =
-'https://docs.google.com/spreadsheets/d/e/2PACX-1vRRcjCz55sl17I4OMcz2AdS0J915NnR44p6A3is7fy-wcYuY9uh1e3tID0Z37qvsA/pub?gid=1115827490&single=true&output=csv';
-
-async function carregarItens(){
-
-const resposta = await fetch(csvItens);
-const texto = await resposta.text();
-
-const linhas = texto.trim().split('\n').map(l=>l.split(','));
-
-const head = linhas[0];
-const dados = linhas.slice(1);
-
-document.getElementById('itensPrevistos').innerText =
-dados.length;
-
-document.getElementById('atualizacao').innerText =
-new Date().toLocaleString('pt-BR');
-
-document.querySelector('#tabelaItens thead').innerHTML =
-'<tr>' +
-head.map(h=>`<th>${h}</th>`).join('') +
-'</tr>';
-
-const tbody =
-document.querySelector('#tabelaItens tbody');
-
-function render(filtro=''){
-
-tbody.innerHTML='';
-
-dados
-.filter(linha =>
-linha.join(' ')
-.toLowerCase()
-.includes(filtro.toLowerCase())
-)
-.slice(0,200)
-.forEach(linha=>{
-
-const tr=document.createElement('tr');
-
-tr.innerHTML=
-linha.map(c=>`<td>${c}</td>`).join('');
-
-tbody.appendChild(tr);
-
-});
+/* ========= PARSE: ATRACAÇÃO (blocos) ========= */
+function parseAtr(rows) {
+  const blocks = []; let cur = null, H = null, updated = null;
+  rows.forEach((r, i) => {
+    r.forEach((v, j) => { if (norm(v).startsWith('DATA DA ULT') && rows[i + 1]) updated = pd(rows[i + 1][j]) || updated; });
+    const c0 = norm(r[0]);
+    if (c0 === 'DATA DE SAIDA') {
+      H = {}; r.forEach((v, j) => { const k = norm(v); if (!k) return; if (k === 'QUANTIDADE') { H.qe ??= j; H.qi = j; } else H[k] ??= j; });
+      cur = { items: [], first: true }; blocks.push(cur); return;
+    }
+    if (!cur) return;
+    const vi = H['TRANSIT TIME'] ?? 2;
+    if (c0.startsWith('AGENTE')) cur.agente = clean(r[vi]);
+    else if (c0.startsWith('TERMINAL')) cur.terminal = clean(r[vi]);
+    else if (c0.startsWith('ARMADOR')) cur.armador = clean(r[vi]);
+    else if (c0.startsWith('STATUS')) cur.status = clean(r[vi]);
+    if (cur.first && pd(r[0])) {
+      cur.etd = pd(r[H['DATA DE SAIDA']]); cur.eta = pd(r[H['DATA DE CHEGADA']]);
+      cur.transit = clean(r[H['TRANSIT TIME']]); cur.equip = clean(r[H['EQUIPAMENTO']]); cur.qe = clean(r[H.qe]); cur.first = false;
+    }
+    const code = clean(r[H.CODIGO]), prod = clean(r[H.PRODUTO]);
+    if (code || prod) cur.items.push({
+      code, prod, qty: num(r[H.qi]), proc: clean(r[H.PROCESSO]), forn: clean(r[H.FORNECEDOR]), desp: clean(r[H.DESPACHANTE]),
+      navio: clean(r[H.NAVIO]), cont: clean(r[H.CONTAINER]), invoice: clean(r[H.INVOICE])
+    });
+  });
+  const out = [], items = [];
+  blocks.filter(b => b.items.length).forEach((b, n) => {
+    const f = b.items[0];
+    b.id = n; b.proc = f.proc; b.navio = f.navio; b.forn = f.forn; b.desp = f.desp; b.invoice = f.invoice;
+    b.armador ||= '—'; b.agente ||= '—'; b.status ||= '—'; b.group = grp(b.status);
+    const txt = norm(b.items.map(x => x.cont).join(' ')).replace(/\s(?=\d{7})/g, '');
+    b.ids = [...new Set(txt.match(/[A-Z]{4}\d{7}/g) || [])];
+    const eq = (b.qe || '').match(/^(\d+)\s*X\s*\d+\s*\+\s*(\d+)/i);
+    b.nCont = b.ids.length || (eq ? +eq[1] + +eq[2] : Math.round(num(b.qe))) || 1;
+    b.contTxt = b.ids.length ? b.ids.join(', ') : clean(f.cont);
+    b._s = norm([b.proc, b.navio, b.armador, b.agente, b.status, b.forn, b.contTxt, b.items.map(x => x.code + ' ' + x.prod).join(' ')].join(' '));
+    out.push(b);
+    b.items.forEach(x => items.push({ ...x, bid: b.id, armador: b.armador, agente: b.agente, status: b.status, group: b.group, eta: b.eta, etd: b.etd,
+      _s: norm([x.proc, x.code, x.prod, b.contTxt, x.cont, x.navio, b.armador, b.agente, b.status, x.forn].join(' ')) }));
+  });
+  return { blocks: out, items, updated };
 }
 
-render();
-
-document
-.getElementById('buscaItens')
-.addEventListener('input',e=>{
-render(e.target.value);
-});
+/* ========= PARSE: ITENS PREVISTOS ========= */
+function parseItens(rows) {
+  const hi = rows.findIndex(r => r.some(v => norm(v).startsWith('DATA DE CHEGADA')));
+  if (hi < 0) return [];
+  const H = {}; rows[hi].forEach((v, j) => { const k = norm(v); if (k) H[k] ??= j; });
+  const dk = Object.keys(H).find(k => k.startsWith('DATA DE CHEGADA'));
+  return rows.slice(hi + 1).map(r => {
+    const code = clean(r[H.CODIGO]), prod = clean(r[H.PRODUTO]); if (!code && !prod) return null;
+    const status = clean(r[H.STATUS]);
+    return { date: pd(r[H[dk]]), code, prod, qty: num(r[H.QUANTIDADE]), status, group: grp(status), _s: norm(code + ' ' + prod + ' ' + status) };
+  }).filter(Boolean);
 }
 
-async function carregarAtracacao(){
+/* ========= ESTADO ========= */
+const D = { blocks: [], items: [], itens: [], updated: null };
+const F = { opsQ: '', opsG: 'Todos', opsA: '', opsAg: '', atrQ: '', atrG: 'Todos', portQ: '', portS: '' };
+const ST = { ops: { k: 'eta', d: 'asc', limit: 100 }, atr: { k: 'eta', d: 'asc', limit: 100 }, port: { k: 'date', d: 'asc', limit: 100 } };
+const charts = {};
+let lastRun = 0;
 
-const resposta = await fetch(csvAtracacao);
-const texto = await resposta.text();
-
-const linhas =
-texto.trim().split('\n');
-
-document.getElementById('atracacoes').innerText =
-linhas.length - 1;
-
+/* ========= MÉTRICAS ========= */
+function metrics() {
+  const b = D.blocks, T = TODAY(), lim = new Date(T.getTime() + CFG.soonDays * 864e5);
+  const sumC = g => b.filter(x => g === 'all' || x.group === g).reduce((s, x) => s + x.nCont, 0);
+  const procs = new Set(b.map(x => norm(x.proc)).filter(Boolean));
+  const skus = new Set([...D.items.map(x => x.code), ...D.itens.map(x => x.code)].filter(Boolean));
+  const portItens = D.itens.filter(x => x.group === 'Atracado');
+  const soon = b.filter(x => x.group !== 'Atracado' && x.eta && x.eta >= T && x.eta <= lim).sort((a, c) => a.eta - c.eta);
+  return {
+    procs: procs.size, cont: sumC('all'), skus: skus.size,
+    nav: sumC('Navegando'), emb: sumC('Embarcado'), atr: sumC('Atracado'),
+    portSkus: new Set(portItens.map(x => x.code)).size, portQty: portItens.reduce((s, x) => s + x.qty, 0), portLines: portItens.length,
+    soon, soonCont: soon.reduce((s, x) => s + x.nCont, 0)
+  };
 }
 
-carregarItens();
-carregarAtracacao();
+/* ========= KPIs ========= */
+function kpiHTML(list, delay = 0) {
+  return list.map((k, i) => `<div class="kpi glass" style="--c:${k.c};animation-delay:${delay + i * 70}ms">
+    <div class="lbl"><i></i>${k.l}</div><div class="val" data-n="${k.v}">0</div><div class="sub">${k.s || ''}</div>
+    ${k.p != null ? `<div class="bar"><span data-w="${k.p}"></span></div>` : ''}</div>`).join('');
+}
+function animate(root) {
+  root.querySelectorAll('.val').forEach(el => {
+    const to = +el.dataset.n, t0 = performance.now();
+    (function step(t) { const p = Math.min(1, (t - t0) / 1100), e = 1 - Math.pow(1 - p, 4); el.textContent = nf.format(Math.round(to * e)); if (p < 1) requestAnimationFrame(step); })(t0);
+  });
+  requestAnimationFrame(() => root.querySelectorAll('.bar span').forEach(s => s.style.width = s.dataset.w + '%'));
+}
+const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
 
-</script>
+function renderExec() {
+  const m = metrics();
+  $('#kpiExec').innerHTML = kpiHTML([
+    { l: 'Processos Ativos', v: m.procs, c: '#bf5af2', s: `${nf.format(m.cont)} containers · ${nf.format(m.skus)} produtos`, p: 100 },
+    { l: 'Containers Navegando', v: m.nav, c: COLORS.Navegando, s: `${pct(m.nav, m.cont)}% do total`, p: pct(m.nav, m.cont) },
+    { l: 'Containers Embarcados', v: m.emb, c: COLORS.Embarcado, s: `${pct(m.emb, m.cont)}% do total`, p: pct(m.emb, m.cont) },
+    { l: 'Containers Atracados', v: m.atr, c: COLORS.Atracado, s: `${pct(m.atr, m.cont)}% do total`, p: pct(m.atr, m.cont) },
+    { l: 'Produtos no Porto', v: m.portSkus, c: '#64d2ff', s: `${nf.format(m.portQty)} un. · ${m.portLines} linhas`, p: pct(m.portLines, D.itens.length) },
+    { l: 'Próximas Chegadas', v: m.soon.length, c: '#ff375f', s: `${m.soonCont} containers em ${CFG.soonDays} dias`, p: pct(m.soon.length, m.procs) }
+  ]);
+  animate($('#kpiExec'));
 
-<footer>
-Control Tower Importação Distac
-</footer>
+  Chart.defaults.color = '#86868b'; Chart.defaults.font.family = "Inter,-apple-system,sans-serif";
+  const grid = { color: 'rgba(255,255,255,.06)' }, noGrid = { display: false };
+  // 1. Status
+  const gs = ['Navegando', 'Embarcado', 'Atracado', 'Outros'].map(g => [g, D.blocks.filter(x => x.group === g).reduce((s, x) => s + x.nCont, 0)]).filter(x => x[1]);
+  mk('chStatus', { type: 'doughnut', data: { labels: gs.map(x => x[0]), datasets: [{ data: gs.map(x => x[1]), backgroundColor: gs.map(x => COLORS[x[0]]), borderWidth: 0, hoverOffset: 8 }] },
+    options: { cutout: '72%', maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 16 } } } } });
+  // 2. Semana
+  const wk = {}, T = TODAY();
+  D.blocks.filter(x => x.eta && x.group !== 'Atracado').forEach(x => {
+    const d = new Date(x.eta); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const k = d.getTime();
+    (wk[k] ??= { Navegando: 0, Embarcado: 0, Outros: 0 })[x.group === 'Navegando' || x.group === 'Embarcado' ? x.group : 'Outros'] += x.nCont;
+  });
+  const ks = Object.keys(wk).map(Number).sort((a, b) => a - b).slice(0, 14);
+  mk('chWeek', { type: 'bar', data: { labels: ks.map(k => 'Sem ' + new Date(k).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })),
+    datasets: ['Navegando', 'Embarcado', 'Outros'].map(g => ({ label: g, data: ks.map(k => wk[k][g]), backgroundColor: COLORS[g], borderRadius: 6, stack: 's' })) },
+    options: { maintainAspectRatio: false, scales: { x: { grid: noGrid, stacked: true }, y: { grid, stacked: true, ticks: { precision: 0 } } }, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true } } } } });
+  // 3. Armador
+  const ar = {}; D.blocks.forEach(x => ar[x.armador] = (ar[x.armador] || 0) + x.nCont);
+  const ae = Object.entries(ar).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  mk('chArmador', { type: 'bar', data: { labels: ae.map(x => x[0]), datasets: [{ data: ae.map(x => x[1]), borderRadius: 8, backgroundColor: ['#0a84ff', '#5e5ce6', '#bf5af2', '#64d2ff', '#30d158', '#ff9f0a', '#ff375f', '#8e8e93'] }] },
+    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid, ticks: { precision: 0 } }, y: { grid: noGrid } } } });
+  // 4. Próximas chegadas
+  $('#nextList').innerHTML = m.soon.length ? m.soon.slice(0, 8).map(x => {
+    const dd = Math.round((x.eta - T) / 864e5);
+    return `<div class="next-item" data-b="${x.id}"><b>${esc(x.proc)} · ${esc(x.navio || '—')}</b><div class="d"><strong>${fmtD(x.eta)}</strong>${dd === 0 ? 'hoje' : 'em ' + dd + ' d'}</div>
+      <small>${esc(x.forn)} · ${x.nCont} cont. · ${esc(x.armador)} · <span class="pill g-${x.group}">${esc(x.group)}</span></small></div>`;
+  }).join('') : `<div class="empty">Nenhuma chegada prevista nos próximos ${CFG.soonDays} dias.</div>`;
+}
+function mk(id, cfg) { charts[id]?.destroy(); charts[id] = new Chart($('#' + id), cfg); }
 
-</body>
-</html>
+/* ========= TABELA GENÉRICA ========= */
+const pill = (g, t) => `<span class="pill g-${g}">${esc(t)}</span>`;
+function tbl(el, cols, rows, st, onRow, again) {
+  const val = (r, c) => c.v ? c.v(r) : r[c.k], col = cols.find(c => c.k === st.k) || cols[0];
+  const sorted = [...rows].sort((a, b) => {
+    let x = val(a, col), y = val(b, col); if (x == null || x === '') return 1; if (y == null || y === '') return -1;
+    const r = x instanceof Date ? x - y : typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'pt-BR', { numeric: true });
+    return st.d === 'asc' ? r : -r;
+  });
+  const shown = sorted.slice(0, st.limit);
+  el.innerHTML = rows.length ? `<table><thead><tr>${cols.map(c => `<th data-k="${c.k}" class="${st.k === c.k ? 'sorted ' + st.d : ''}">${c.t}</th>`).join('')}</tr></thead>
+    <tbody>${shown.map((r, i) => `<tr data-i="${i}" ${onRow ? 'class="click"' : ''}>${cols.map(c => `<td class="${c.cls || ''}">${c.f ? c.f(r) : esc(val(r, c) ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    <div class="tfoot"><span>Mostrando ${nf.format(shown.length)} de ${nf.format(rows.length)}</span>${rows.length > shown.length ? '<button>Carregar mais</button>' : ''}</div>`
+    : '<div class="empty">Nenhum resultado para os filtros atuais.</div>';
+  el.querySelectorAll('th').forEach(th => th.onclick = () => { st.d = st.k === th.dataset.k && st.d === 'asc' ? 'desc' : 'asc'; st.k = th.dataset.k; again(); });
+  el.querySelectorAll('tbody tr').forEach(tr => onRow && (tr.onclick = () => onRow(shown[+tr.dataset.i])));
+  const more = el.querySelector('.tfoot button'); if (more) more.onclick = () => { st.limit += 150; again(); };
+}
+function chips(el, groups, counts, key, again) {
+  el.innerHTML = groups.map(g => `<button class="chip ${F[key] === g ? 'active' : ''}" data-g="${g}">${g}<em>${counts[g] ?? 0}</em></button>`).join('');
+  el.querySelectorAll('.chip').forEach(c => c.onclick = () => { F[key] = c.dataset.g; again(); });
+}
+function fillSelect(el, label, values, key) {
+  el.innerHTML = `<option value="">${label}</option>` + [...new Set(values.filter(v => v && v !== '—'))].sort().map(v => `<option>${esc(v)}</option>`).join('');
+  el.value = F[key];
+}
+const match = (s, q) => !q || norm(q).split(/\s+/).every(t => s.includes(t));
+const cnt = (arr, key) => { const c = { Todos: arr.length }; arr.forEach(x => c[x[key]] = (c[x[key]] || 0) + 1); return c; };
 
+/* ========= OPERACIONAL ========= */
+function renderOps() {
+  const m = metrics();
+  $('#kpiOps').innerHTML = kpiHTML([
+    { l: 'Total de Processos', v: m.procs, c: '#bf5af2' }, { l: 'Total de Containers', v: m.cont, c: '#64d2ff' }, { l: 'Total de Produtos', v: m.skus, c: '#ffd60a' },
+    { l: 'Atracados', v: m.atr, c: COLORS.Atracado }, { l: 'Navegando', v: m.nav, c: COLORS.Navegando }, { l: 'Embarcados', v: m.emb, c: COLORS.Embarcado }, { l: 'Produtos no Porto', v: m.portSkus, c: '#ff375f' }
+  ]);
+  animate($('#kpiOps'));
+  fillSelect($('#opsA'), 'Todos os armadores', D.items.map(x => x.armador), 'opsA');
+  fillSelect($('#opsAg'), 'Todos os agentes', D.items.map(x => x.agente), 'opsAg');
+  opsTable();
+}
+function opsTable() {
+  const base = D.items.filter(r => (!F.opsA || r.armador === F.opsA) && (!F.opsAg || r.agente === F.opsAg) && match(r._s, F.opsQ));
+  chips($('#opsChips'), ['Todos', 'Navegando', 'Embarcado', 'Atracado'], cnt(base, 'group'), 'opsG', opsTable);
+  const rows = base.filter(r => F.opsG === 'Todos' || r.group === F.opsG);
+  const extra = F.opsQ ? D.itens.filter(x => match(x._s, F.opsQ)).length : 0;
+  $('#opsHint').innerHTML = F.opsQ ? `${nf.format(rows.length)} item(ns) em embarques${extra ? ` · <a id="goPort">${extra} correspondência(s) em Itens no Porto →</a>` : ''}` : 'Clique em uma linha para ver o embarque completo.';
+  if (extra) $('#goPort').onclick = () => { F.portQ = F.opsQ; $('#portQ').value = F.portQ; go('port'); };
+  tbl($('#opsTable'), [
+    { k: 'proc', t: 'Processo', cls: 'mono' }, { k: 'code', t: 'SKU', cls: 'mono' }, { k: 'prod', t: 'Produto', cls: 'wrap' },
+    { k: 'qty', t: 'Qtd', cls: 'num', f: r => nf.format(r.qty) }, { k: 'cont', t: 'Container', cls: 'mono wrap', f: r => esc(D.blocks[r.bid].contTxt) },
+    { k: 'navio', t: 'Navio' }, { k: 'armador', t: 'Armador' }, { k: 'agente', t: 'Agente' },
+    { k: 'eta', t: 'ETA', f: r => fmtD(r.eta) }, { k: 'status', t: 'Status', f: r => pill(r.group, r.status) }
+  ], rows, ST.ops, r => openDrawer(r.bid), opsTable);
+}
+
+/* ========= ATRACAÇÃO ========= */
+function renderAtr() {
+  const base = D.blocks.filter(b => match(b._s, F.atrQ));
+  const c = { Todos: base.length }; base.forEach(b => c[b.group] = (c[b.group] || 0) + 1);
+  chips($('#atrChips'), ['Todos', 'Navegando', 'Embarcado', 'Atracado'], c, 'atrG', renderAtr);
+  const rows = base.filter(b => F.atrG === 'Todos' || b.group === F.atrG);
+  tbl($('#atrTable'), [
+    { k: 'proc', t: 'Processo', cls: 'mono' },
+    { k: 'nCont', t: 'Container', cls: 'wrap', f: b => `<b>${b.nCont}×</b> ${esc(b.equip || '')}<br><small style="color:var(--muted)">${esc(b.ids.slice(0, 2).join(', ') || b.contTxt.slice(0, 40))}${b.ids.length > 2 ? ' +' + (b.ids.length - 2) : ''}</small>` },
+    { k: 'navio', t: 'Navio' }, { k: 'eta', t: 'ETA', f: b => fmtD(b.eta) }, { k: 'etd', t: 'ETD', f: b => fmtD(b.etd) },
+    { k: 'status', t: 'Status', f: b => pill(b.group, b.status) }, { k: 'armador', t: 'Armador' }, { k: 'agente', t: 'Agente' }
+  ], rows, ST.atr, b => openDrawer(b.id), renderAtr);
+}
+
+/* ========= ITENS NO PORTO ========= */
+function renderPort() {
+  const m = metrics(), nxt = D.itens.filter(x => x.date && x.date >= TODAY()).sort((a, b) => a.date - b.date)[0];
+  $('#kpiPort').innerHTML = kpiHTML([
+    { l: 'Linhas previstas', v: D.itens.length, c: '#0a84ff' }, { l: 'Produtos no Porto', v: m.portSkus, c: COLORS.Atracado, s: `${nf.format(m.portQty)} unidades` },
+    { l: 'Quantidade total', v: D.itens.reduce((s, x) => s + x.qty, 0), c: '#bf5af2' }, { l: 'Próxima data', v: 0, c: '#ff9f0a', s: nxt ? fmtD(nxt.date) : '—' }
+  ]);
+  animate($('#kpiPort'));
+  fillSelect($('#portS'), 'Todos os status', D.itens.map(x => x.status), 'portS');
+  portTable();
+}
+function portTable() {
+  const rows = D.itens.filter(x => (!F.portS || x.status === F.portS) && match(x._s, F.portQ));
+  tbl($('#portTable'), [
+    { k: 'code', t: 'Código', cls: 'mono' }, { k: 'prod', t: 'Produto', cls: 'wrap' }, { k: 'qty', t: 'Quantidade', cls: 'num', f: r => nf.format(r.qty) },
+    { k: 'date', t: 'Data Prevista', f: r => fmtD(r.date) }, { k: 'status', t: 'Status', f: r => pill(r.group, r.status) }
+  ], rows, ST.port, null, portTable);
+}
+
+/* ========= DRAWER ========= */
+function openDrawer(id) {
+  const b = D.blocks[id]; if (!b) return;
+  const f = (l, v, full) => `<div class="${full ? 'full' : ''}"><small>${l}</small><span>${esc(v || '—')}</span></div>`;
+  $('#drawer').innerHTML = `<button class="icon-btn close" onclick="closeDrawer()">✕</button>
+    ${pill(b.group, b.status)}<h2>Processo ${esc(b.proc)}</h2>
+    <div class="dgrid">${f('Navio', b.navio)}${f('Fornecedor', b.forn)}${f('ETD (saída)', fmtD(b.etd))}${f('ETA (chegada)', fmtD(b.eta))}${f('Transit time', b.transit ? b.transit + ' dias' : '')}
+    ${f('Equipamento', b.nCont + '× ' + b.equip)}${f('Armador', b.armador)}${f('Agente', b.agente)}${f('Terminal', b.terminal)}${f('Despachante', b.desp)}${f('Containers / BL', b.contTxt, true)}</div>
+    <h3 style="margin-bottom:10px;font-size:14px">Itens do embarque (${b.items.length})</h3>
+    <div class="ditems">${b.items.map(x => `<div class="r"><span>${esc(x.code)}</span><span>${esc(x.prod)}</span><b>${nf.format(x.qty)}</b></div>`).join('')}</div>`;
+  $('#drawer').classList.add('on'); $('#overlay').classList.add('on');
+}
+function closeDrawer() { $('#drawer').classList.remove('on'); $('#overlay').classList.remove('on'); }
+window.closeDrawer = closeDrawer;
+
+/* ========= NAVEGAÇÃO ========= */
+function go(v) {
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
+  $$('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + v));
+  if (v === 'port') portTable();
+  history.replaceState(null, '', '#' + v); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ========= CICLO DE DADOS ========= */
+async function refresh(first) {
+  if (Date.now() - lastRun < 3000 && !first) return; lastRun = Date.now();
+  $('#live').className = 'live'; $('#updated').textContent = 'Sincronizando…';
+  try {
+    const [a, i] = await Promise.all([load(CFG.atr), load(CFG.itens)]);
+    const p = parseAtr(a); D.blocks = p.blocks; D.items = p.items; D.itens = parseItens(i); D.updated = p.updated;
+    if (!D.blocks.length) throw new Error('Nenhum embarque encontrado na aba ATRACAÇÃO.');
+    $('#banner').hidden = true; renderExec(); renderOps(); renderAtr(); renderPort();
+    $('#live').className = 'live ok';
+    $('#updated').textContent = 'Planilha: ' + fmtD(D.updated) + ' · sync ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  } catch (e) {
+    console.error(e); $('#live').className = 'live err'; $('#updated').textContent = 'Falha na sincronização';
+    $('#banner').hidden = false; $('#banner').textContent = 'Não foi possível carregar os dados das planilhas (' + (e.message || 'erro de rede') + '). Verifique se as planilhas estão publicadas na web e tente novamente.';
+  } finally { $('#loader').classList.add('off'); }
+}
+
+/* ========= INIT ========= */
+$$('.tab').forEach(t => t.onclick = () => go(t.dataset.view));
+$('#overlay').onclick = closeDrawer; document.addEventListener('keydown', e => e.key === 'Escape' && closeDrawer());
+$('#refresh').onclick = () => refresh();
+$('#nextList').onclick = e => { const n = e.target.closest('.next-item'); if (n) openDrawer(+n.dataset.b); };
+$('#opsQ').oninput = e => { F.opsQ = e.target.value; ST.ops.limit = 100; opsTable(); };
+$('#opsA').onchange = e => { F.opsA = e.target.value; opsTable(); };
+$('#opsAg').onchange = e => { F.opsAg = e.target.value; opsTable(); };
+$('#atrQ').oninput = e => { F.atrQ = e.target.value; ST.atr.limit = 100; renderAtr(); };
+$('#portQ').oninput = e => { F.portQ = e.target.value; ST.port.limit = 100; portTable(); };
+$('#portS').onchange = e => { F.portS = e.target.value; portTable(); };
+document.addEventListener('visibilitychange', () => !document.hidden && Date.now() - lastRun > CFG.refreshMs && refresh());
+setInterval(refresh, CFG.refreshMs);
+const h = location.hash.slice(1); if (['exec', 'ops', 'atr', 'port'].includes(h)) go(h);
+refresh(true);
